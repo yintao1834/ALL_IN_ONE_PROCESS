@@ -52,9 +52,7 @@ class StrainProcessorApp:
         self.root.columnconfigure(1, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        left = ttk.Frame(self.root, padding=12)
-        left.grid(row=0, column=0, sticky="nsw")
-        left.columnconfigure(0, weight=1)
+        left = self._build_scrollable_left_panel()
 
         right = ttk.Frame(self.root, padding=(0, 12, 12, 12))
         right.grid(row=0, column=1, sticky="nsew")
@@ -67,6 +65,48 @@ class StrainProcessorApp:
         self._build_extract_panel(left)
         self._build_log_panel(left)
         self._build_plot_panel(right)
+
+    def _build_scrollable_left_panel(self) -> ttk.Frame:
+        container = ttk.Frame(self.root)
+        container.grid(row=0, column=0, sticky="nsw")
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(container, width=430, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.grid(row=0, column=0, sticky="ns")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        left = ttk.Frame(canvas, padding=12)
+        left.columnconfigure(0, weight=1)
+        window_id = canvas.create_window((0, 0), window=left, anchor="nw")
+
+        def update_scroll_region(_event: tk.Event) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def update_inner_width(event: tk.Event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        def on_mousewheel(event: tk.Event) -> None:
+            if event.delta:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def bind_mousewheel(_event: tk.Event) -> None:
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        def unbind_mousewheel(_event: tk.Event) -> None:
+            canvas.unbind_all("<MouseWheel>")
+
+        left.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", update_inner_width)
+        canvas.bind("<Enter>", bind_mousewheel)
+        canvas.bind("<Leave>", unbind_mousewheel)
+        left.bind("<Enter>", bind_mousewheel)
+        left.bind("<Leave>", unbind_mousewheel)
+
+        return left
 
     def _build_file_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="File", padding=10)
@@ -323,7 +363,7 @@ class StrainProcessorApp:
     def extract(self) -> None:
         try:
             source_df, source_label = self._extract_source()
-            ranges = self._ranges_from_vars(self.extract_range_vars, require_all=True)
+            ranges, channel_numbers, channel_labels = self._channel_ranges_from_vars(self.extract_range_vars)
             pipe_length = float(self.pipe_length_var.get())
             reverse_channels = self._parse_reverse_channels()
 
@@ -334,6 +374,8 @@ class StrainProcessorApp:
                 target_length=None,
                 value_column="strain" if "strain" in source_df.columns else self._selected_value_column(),
                 reverse_channels=reverse_channels,
+                channel_numbers=channel_numbers,
+                channel_labels=channel_labels,
             )
             self._plot_dataframe(
                 df=self.extracted_df,
@@ -345,6 +387,7 @@ class StrainProcessorApp:
             )
             self._set_status(
                 "Extracted strain. "
+                f"Channels: {stats['channel_labels']}; "
                 f"Channel lengths before adjustment: {stats['channel_lengths']}; "
                 f"output points: {stats['output_length']}; trim counts: {stats['trim_counts']}."
             )
@@ -493,6 +536,34 @@ class StrainProcessorApp:
         if not ranges:
             raise ValueError("Enter at least one range.")
         return ranges
+
+    def _channel_ranges_from_vars(
+        self,
+        range_vars: list[tuple[tk.StringVar, tk.StringVar]],
+    ) -> tuple[list[tuple[float, float]], list[int], list[str]]:
+        ranges = []
+        channel_numbers = []
+        channel_labels = []
+
+        for idx, (start_var, end_var) in enumerate(range_vars, start=1):
+            start_text = start_var.get().strip()
+            end_text = end_var.get().strip()
+            if not start_text and not end_text:
+                continue
+            if not start_text or not end_text:
+                raise ValueError(f"ch{idx} needs both start and end values, or leave both blank.")
+
+            start, end = float(start_text), float(end_text)
+            if start > end:
+                start, end = end, start
+
+            ranges.append((start, end))
+            channel_numbers.append(idx)
+            channel_labels.append(f"ch{idx}")
+
+        if not ranges:
+            raise ValueError("Enter at least one channel range.")
+        return ranges, channel_numbers, channel_labels
 
     def _optional_pair(
         self,

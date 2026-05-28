@@ -36,7 +36,6 @@ def _trim_series_center(series: pd.Series, target_length: int) -> tuple[pd.Serie
     return series.iloc[trim_front:end].reset_index(drop=True), (trim_front, trim_back)
 
 
-
 def extract_strain_dataframe(
     df: pd.DataFrame,
     ranges: list[tuple[float, float]] | None = None,
@@ -44,8 +43,16 @@ def extract_strain_dataframe(
     target_length: int | None = None,
     value_column: str | None = None,
     reverse_channels: tuple[int, ...] = (2, 4),
+    channel_numbers: list[int] | None = None,
+    channel_labels: list[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     ranges = ranges or DEFAULT_MASK_RANGES
+    channel_numbers = channel_numbers or list(range(1, len(ranges) + 1))
+    channel_labels = channel_labels or [f"ch{number}" for number in channel_numbers]
+
+    if len(channel_numbers) != len(ranges) or len(channel_labels) != len(ranges):
+        raise ValueError("Channel metadata must have the same length as ranges.")
+
     value_column = guess_value_column(df.columns, value_column)
 
     if DISTANCE_COLUMN not in df.columns:
@@ -58,7 +65,7 @@ def extract_strain_dataframe(
 
     channels: list[pd.Series] = []
     channel_lengths = []
-    for channel_number, (start, end) in enumerate(ranges, start=1):
+    for channel_number, (start, end) in zip(channel_numbers, ranges):
         mask = (result_df[DISTANCE_COLUMN] > start) & (result_df[DISTANCE_COLUMN] < end)
         channel = result_df.loc[mask, value_column].reset_index(drop=True)
 
@@ -83,16 +90,19 @@ def extract_strain_dataframe(
 
     output_data = {}
     trim_counts = []
-    for channel_number, channel in enumerate(channels, start=1):
+    for channel_label, channel in zip(channel_labels, channels):
         adjusted, trim_count = _trim_series_center(channel, target_length)
         trim_counts.append(trim_count)
-        output_data[f"ch{channel_number}"] = adjusted.to_numpy()
+        output_data[channel_label] = adjusted.to_numpy()
 
     s = np.linspace(0, pipe_length, target_length)
     out_df = pd.DataFrame(output_data, index=s)
     out_df.index.name = "s"
 
     stats = {
+        "channel_numbers": channel_numbers,
+        "channel_labels": channel_labels,
+        "channel_ranges": ranges,
         "channel_lengths": channel_lengths,
         "output_length": target_length,
         "trim_counts": trim_counts,
@@ -121,10 +131,12 @@ def extract_strain(
     )
 
     print(f"Read {input_path} with encoding {encoding}")
-    display_ranges = ranges or DEFAULT_MASK_RANGES
-    for channel_number, (start, end) in enumerate(display_ranges, start=1):
-        length = stats["channel_lengths"][channel_number - 1]
-        print(f"ch{channel_number} range {start}-{end}, length: {length}")
+    for channel_label, (start, end), length in zip(
+        stats["channel_labels"],
+        stats["channel_ranges"],
+        stats["channel_lengths"],
+    ):
+        print(f"{channel_label} range {start}-{end}, length: {length}")
 
     if stats["trimmed"]:
         print(f"Center-trimming all channels to {stats['output_length']} points.")
