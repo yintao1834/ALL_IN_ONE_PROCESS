@@ -26,3 +26,12 @@ python strain_gui.py
 ```
 
 Then follow the GUI instructions to select the strain data range and check the visualization results.
+
+### PS: **If** accumulation is needed, please follow the instruction and run
+
+```bash
+data_accumulate.py
+```
+## PIPELINE
+
+Noise filtering --> Extract strain --> Accumulation
